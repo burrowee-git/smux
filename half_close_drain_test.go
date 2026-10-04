@@ -1,6 +1,7 @@
 package smux
 
 import (
+	"bytes"
 	"io"
 	"net"
 	"sync/atomic"
@@ -170,24 +171,48 @@ func TestBothHalvesClosedRetainedStreamCountsLikeAnOpenStream(t *testing.T) {
 	}
 }
 
-func TestSessionCloseReleasesRetainedStreams(t *testing.T) {
+func TestSessionCloseKeepsRetainedStreamsReadable(t *testing.T) {
 	for _, version := range []int{1, 2} {
 		version := version
 		t.Run(versionName(version), func(t *testing.T) {
 			client, server := halfCloseDrainPair(t, version)
-			bothHalvesClosedWithTail(t, client, server)
+			a := bothHalvesClosedWithTail(t, client, server)
 
 			client.Close()
-			client.streamLock.Lock()
-			retained := len(client.streams)
-			client.streamLock.Unlock()
-			if retained != 0 || client.NumStreams() != 0 {
-				t.Fatalf("streams retained after session Close: %d", retained)
+			got, err := io.ReadAll(a)
+			if err != nil {
+				t.Fatalf("ReadAll: %v", err)
+			}
+			if string(got) != "tail" {
+				t.Fatalf("ReadAll = %q, want %q", got, "tail")
+			}
+			if n := client.NumStreams(); n != 0 {
+				t.Fatalf("NumStreams = %d, want 0", n)
 			}
 			want := int32(client.config.MaxReceiveBuffer)
 			if got := atomic.LoadInt32(&client.bucket); got != want {
 				t.Fatalf("bucket = %d, want %d", got, want)
 			}
+		})
+	}
+}
+
+func TestBothHalvesClosedWriteToKeepsTailAndReleases(t *testing.T) {
+	for _, version := range []int{1, 2} {
+		version := version
+		t.Run(versionName(version), func(t *testing.T) {
+			client, server := halfCloseDrainPair(t, version)
+			a := bothHalvesClosedWithTail(t, client, server)
+
+			var buf bytes.Buffer
+			if _, err := a.WriteTo(&buf); err != nil {
+				t.Fatalf("WriteTo: %v", err)
+			}
+			if buf.String() != "tail" {
+				t.Fatalf("WriteTo wrote %q, want %q", buf.String(), "tail")
+			}
+			waitStreamsReleased(t, client)
+			waitStreamsReleased(t, server)
 		})
 	}
 }
