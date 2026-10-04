@@ -270,8 +270,16 @@ func (s *Session) Close() error {
 	}
 
 	s.streamLock.Lock()
-	for k := range s.streams {
-		s.streams[k].sessionClose()
+	for k, stream := range s.streams {
+		stream.sessionClose()
+		// a stream retained only for its unread data has no reader left
+		// once the session is gone, release its buffer and tokens.
+		if stream.bothHalvesClosed() {
+			if n := stream.recycleTokens(); n > 0 {
+				atomic.AddInt32(&s.bucket, int32(n))
+			}
+			delete(s.streams, k)
+		}
 	}
 	s.streamLock.Unlock()
 	return s.conn.Close()

@@ -815,17 +815,25 @@ func (s *stream) fin() {
 	s.tryHalfCloseCleanup()
 }
 
-// tryHalfCloseCleanup removes stream after both sides have sent FIN.
-func (s *stream) tryHalfCloseCleanup() {
+// bothHalvesClosed reports whether both sides have sent FIN.
+func (s *stream) bothHalvesClosed() bool {
 	select {
 	case <-s.chFinEvent:
 	default:
-		return
+		return false
 	}
 
 	select {
 	case <-s.chWriteClosed:
+		return true
 	default:
+		return false
+	}
+}
+
+// tryHalfCloseCleanup removes stream after both sides have sent FIN.
+func (s *stream) tryHalfCloseCleanup() {
+	if !s.bothHalvesClosed() {
 		return
 	}
 
