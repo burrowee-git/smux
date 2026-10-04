@@ -151,3 +151,43 @@ func versionName(version int) string {
 	}
 	return "v1"
 }
+
+func TestBothHalvesClosedRetainedStreamCountsLikeAnOpenStream(t *testing.T) {
+	for _, version := range []int{1, 2} {
+		version := version
+		t.Run(versionName(version), func(t *testing.T) {
+			client, server := halfCloseDrainPair(t, version)
+			bothHalvesClosedWithTail(t, client, server)
+
+			if n := client.NumStreams(); n != 1 {
+				t.Fatalf("NumStreams = %d, want 1", n)
+			}
+			want := int32(client.config.MaxReceiveBuffer - len("tail"))
+			if got := atomic.LoadInt32(&client.bucket); got != want {
+				t.Fatalf("bucket = %d, want %d", got, want)
+			}
+		})
+	}
+}
+
+func TestSessionCloseReleasesRetainedStreams(t *testing.T) {
+	for _, version := range []int{1, 2} {
+		version := version
+		t.Run(versionName(version), func(t *testing.T) {
+			client, server := halfCloseDrainPair(t, version)
+			bothHalvesClosedWithTail(t, client, server)
+
+			client.Close()
+			client.streamLock.Lock()
+			retained := len(client.streams)
+			client.streamLock.Unlock()
+			if retained != 0 || client.NumStreams() != 0 {
+				t.Fatalf("streams retained after session Close: %d", retained)
+			}
+			want := int32(client.config.MaxReceiveBuffer)
+			if got := atomic.LoadInt32(&client.bucket); got != want {
+				t.Fatalf("bucket = %d, want %d", got, want)
+			}
+		})
+	}
+}
