@@ -410,6 +410,14 @@ func (s *stream) writeToV2(w io.Writer) (n int64, err error) {
 
 // sendWindowUpdate sends a window update command to the peer.
 func (s *stream) sendWindowUpdate(consumed uint32) error {
+	// the peer has sent FIN and will send no more data, so it needs no
+	// window; the session may already be closed.
+	select {
+	case <-s.chFinEvent:
+		return nil
+	default:
+	}
+
 	var timer *time.Timer
 	var deadline <-chan time.Time
 	if d, ok := s.readDeadline.Load().(time.Time); ok && !d.IsZero() {
@@ -443,10 +451,13 @@ func (s *stream) waitRead() error {
 	case <-s.chFinEvent:
 		// BUGFIX(xtaci): Fix for https://github.com/xtaci/smux/issues/82
 		s.bufferLock.Lock()
-		defer s.bufferLock.Unlock()
-		if s.bufferRing.len() > 0 {
+		pending := s.bufferRing.len() > 0
+		s.bufferLock.Unlock()
+		if pending {
 			return nil
 		}
+		// drained to EOF: release the stream if both halves are closed.
+		s.tryHalfCloseCleanup()
 		return io.EOF
 	case <-s.sess.chSocketReadError:
 		return s.sess.socketReadError.Load().(error)
@@ -812,17 +823,35 @@ func (s *stream) fin() {
 	s.tryHalfCloseCleanup()
 }
 
-// tryHalfCloseCleanup removes stream after both sides have sent FIN.
-func (s *stream) tryHalfCloseCleanup() {
+// bothHalvesClosed reports whether both sides have sent FIN.
+func (s *stream) bothHalvesClosed() bool {
 	select {
 	case <-s.chFinEvent:
 	default:
-		return
+		return false
 	}
 
 	select {
 	case <-s.chWriteClosed:
+		return true
 	default:
+		return false
+	}
+}
+
+// tryHalfCloseCleanup removes stream after both sides have sent FIN.
+func (s *stream) tryHalfCloseCleanup() {
+	if !s.bothHalvesClosed() {
+		return
+	}
+
+	// keep the stream until the reader has drained the peer's data to EOF,
+	// the reader calls tryHalfCloseCleanup again when it sees EOF.
+	s.bufferLock.Lock()
+	pending := s.bufferRing.len() > 0
+	s.bufferLock.Unlock()
+	if pending {
+		s.wakeupReader()
 		return
 	}
 
