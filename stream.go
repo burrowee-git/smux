@@ -410,6 +410,14 @@ func (s *stream) writeToV2(w io.Writer) (n int64, err error) {
 
 // sendWindowUpdate sends a window update command to the peer.
 func (s *stream) sendWindowUpdate(consumed uint32) error {
+	// the peer has sent FIN and will send no more data, so it needs no
+	// window; the session may already be closed.
+	select {
+	case <-s.chFinEvent:
+		return nil
+	default:
+	}
+
 	var timer *time.Timer
 	var deadline <-chan time.Time
 	if d, ok := s.readDeadline.Load().(time.Time); ok && !d.IsZero() {
