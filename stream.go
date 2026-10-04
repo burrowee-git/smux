@@ -443,10 +443,13 @@ func (s *stream) waitRead() error {
 	case <-s.chFinEvent:
 		// BUGFIX(xtaci): Fix for https://github.com/xtaci/smux/issues/82
 		s.bufferLock.Lock()
-		defer s.bufferLock.Unlock()
-		if s.bufferRing.len() > 0 {
+		pending := s.bufferRing.len() > 0
+		s.bufferLock.Unlock()
+		if pending {
 			return nil
 		}
+		// drained to EOF: release the stream if both halves are closed.
+		s.tryHalfCloseCleanup()
 		return io.EOF
 	case <-s.sess.chSocketReadError:
 		return s.sess.socketReadError.Load().(error)
@@ -823,6 +826,16 @@ func (s *stream) tryHalfCloseCleanup() {
 	select {
 	case <-s.chWriteClosed:
 	default:
+		return
+	}
+
+	// keep the stream until the reader has drained the peer's data to EOF,
+	// the reader calls tryHalfCloseCleanup again when it sees EOF.
+	s.bufferLock.Lock()
+	pending := s.bufferRing.len() > 0
+	s.bufferLock.Unlock()
+	if pending {
+		s.wakeupReader()
 		return
 	}
 
