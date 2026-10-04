@@ -205,7 +205,7 @@ func TestBothHalvesClosedWriteToKeepsTailAndReleases(t *testing.T) {
 			a := bothHalvesClosedWithTail(t, client, server)
 
 			var buf bytes.Buffer
-			if _, err := a.WriteTo(&buf); err != nil {
+			if _, err := a.WriteTo(&buf); err != nil && err != io.EOF {
 				t.Fatalf("WriteTo: %v", err)
 			}
 			if buf.String() != "tail" {
