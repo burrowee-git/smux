@@ -1093,7 +1093,10 @@ func testRandomLength(t *testing.T, stream *Stream, N int64) {
 	bytesReceived := int64(0)
 
 	// Writer goroutine
+	var writer sync.WaitGroup
+	writer.Add(1)
 	go func() {
+		defer writer.Done()
 		r := rand.New(writerSrc)
 		sndbuf := make([]byte, maxChunk)
 		lastPrint := int64(0)
@@ -1154,6 +1157,8 @@ func testRandomLength(t *testing.T, stream *Stream, N int64) {
 		}
 	}
 
+	// Join the writer so that no Write is in flight when the caller closes the session
+	writer.Wait()
 }
 
 func BenchmarkAcceptClose(b *testing.B) {
