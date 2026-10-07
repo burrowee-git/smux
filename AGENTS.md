@@ -10,7 +10,7 @@
 - **Low Overhead**: Minimized header (8 bytes).
 - **Traffic Shaping**: Built-in fair queue traffic shaping.
 
-## Architecture & Core Components
+## Architecture & Components
 
 ### 1. Session (`session.go`)
 The `Session` struct is the main manager for a multiplexed connection.
